@@ -25,7 +25,10 @@ NSString *const RCTTCPErrorDomain = @"RCTTCPErrorDomain";
 
 @end
 
-@implementation TcpSocketClient
+@implementation TcpSocketClient {
+    NSString* _hostAddress;
+    NSInteger _portAddress;
+}
 
 + (id)socketClientWithId:(nonnull NSNumber *)clientID andConfig:(id<SocketClientDelegate>)delegate
 {
@@ -54,6 +57,8 @@ NSString *const RCTTCPErrorDomain = @"RCTTCPErrorDomain";
 
 - (BOOL)connect:(NSString *)host port:(int)port withOptions:(NSDictionary *)options error:(NSError **)error
 {
+    _hostAddress = host;
+    _portAddress = port;
     if (_tcpSocket) {
         if (error) {
             *error = [self badInvocationError:@"this client's socket is already connected"];
@@ -223,13 +228,30 @@ NSString *const RCTTCPErrorDomain = @"RCTTCPErrorDomain";
 
 - (void)socket:(GCDAsyncSocket *)sock didConnectToHost:(NSString *)host port:(uint16_t)port
 {
+    if([self isSecureConnection]) {
+        NSMutableDictionary *settings = [NSMutableDictionary dictionary];
+        [settings setObject:_hostAddress
+                     forKey:(NSString *)kCFStreamSSLPeerName];
+        [sock startTLS:settings];
+        return;
+    }
+    
+    [self startReadingData:sock];
+}
+
+- (void)socketDidSecure:(GCDAsyncSocket *)sock
+{
+    [self startReadingData:sock];
+}
+
+- (void) startReadingData: (GCDAsyncSocket *)sock
+{
     if (!_clientDelegate) {
         RCTLogWarn(@"didConnectToHost with nil clientDelegate for %@", [sock userData]);
         return;
     }
-
+    
     [_clientDelegate onConnect:self];
-
     [sock readDataWithTimeout:-1 tag:_id.longValue];
 }
 
@@ -262,6 +284,11 @@ NSString *const RCTTCPErrorDomain = @"RCTTCPErrorDomain";
 - (dispatch_queue_t)methodQueue
 {
     return dispatch_get_main_queue();
+}
+
+-(BOOL) isSecureConnection
+{
+    return _portAddress == 443;
 }
 
 @end
