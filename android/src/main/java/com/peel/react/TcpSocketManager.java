@@ -4,6 +4,8 @@ import android.support.annotation.Nullable;
 import android.util.SparseArray;
 
 import com.koushikdutta.async.AsyncNetworkSocket;
+import com.koushikdutta.async.AsyncSSLSocket;
+import com.koushikdutta.async.AsyncSSLSocketWrapper;
 import com.koushikdutta.async.AsyncServer;
 import com.koushikdutta.async.AsyncServerSocket;
 import com.koushikdutta.async.AsyncSocket;
@@ -29,6 +31,9 @@ public final class TcpSocketManager {
 
     private WeakReference<TcpSocketListener> mListener;
     private AsyncServer mServer = AsyncServer.getDefault();
+
+    private String hostAddress = null;
+    private int portAddress = -1;
 
     private int mInstances = 5000;
 
@@ -121,6 +126,9 @@ public final class TcpSocketManager {
 
     public void connect(final Integer cId, final @Nullable String host, final Integer port) throws UnknownHostException, IOException {
         // resolve the address
+        this.hostAddress = host;
+        this.portAddress = port;
+
         final InetSocketAddress socketAddress;
         if (host != null) {
             socketAddress = new InetSocketAddress(InetAddress.getByName(host), port);
@@ -131,19 +139,43 @@ public final class TcpSocketManager {
         mServer.connectSocket(socketAddress, new ConnectCallback() {
             @Override
             public void onConnectCompleted(Exception ex, AsyncSocket socket) {
-              TcpSocketListener listener = mListener.get();
-                if (ex == null) {
-                    mClients.put(cId, socket);
-                    setSocketCallbacks(cId, socket);
-
-                    if (listener != null) {
-                        listener.onConnect(cId, socketAddress);
-                    }
-                } else if (listener != null) {
-                   listener.onError(cId, ex.getMessage());
+                if (isSecureConnection()) {
+                    AsyncSSLSocketWrapper.handshake(socket,
+                            hostAddress,
+                            portAddress,
+                            AsyncSSLSocketWrapper.getDefaultSSLContext().createSSLEngine(),
+                            null,
+                            null,
+                            true,
+                            new AsyncSSLSocketWrapper.HandshakeCallback() {
+                                @Override
+                                public void onHandshakeCompleted(Exception e, AsyncSSLSocket socket) {
+                                    onConnectionCompleted(e, cId, socket, socketAddress);
+                                }
+                            });
+                }
+                else {
+                    onConnectionCompleted(ex, cId, socket, socketAddress);
                 }
             }
         });
+    }
+
+    public void onConnectionCompleted(Exception e, Integer cId, AsyncSocket socket, InetSocketAddress socketAddress) {
+        TcpSocketListener listener = mListener.get();
+        if(e != null) {
+            if (listener != null) {
+                listener.onError(cId, e.getMessage());
+            }
+            return;
+        }
+
+        mClients.put(cId, socket);
+        setSocketCallbacks(cId, socket);
+
+        if (listener != null) {
+            listener.onConnect(cId, socketAddress);
+        }
     }
 
     public void write(final Integer cId, final byte[] data) {
@@ -174,5 +206,9 @@ public final class TcpSocketManager {
             close(mClients.keyAt(i));
         }
         mClients.clear();
+    }
+
+    private boolean isSecureConnection() {
+        return this.portAddress == 443;
     }
 }
